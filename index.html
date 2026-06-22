@@ -47,6 +47,7 @@ label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px}
 input,select{width:100%;padding:9px 10px;border:0.5px solid var(--border);border-radius:8px;font-size:14px;background:var(--bg3);color:var(--text);font-family:inherit}
 input[type=date]{color-scheme:dark}
 input::placeholder{color:var(--muted)}
+input:disabled,select:disabled{opacity:0.4;cursor:not-allowed}
 select option{background:var(--bg3)}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:200;align-items:flex-end;justify-content:center}
 .modal-overlay.open{display:flex}
@@ -198,7 +199,8 @@ select option{background:var(--bg3)}
 <!-- MODAL VENTA -->
 <div class="modal-overlay" id="m-venta">
   <div class="modal">
-    <div class="modal-title">Registrar venta</div>
+    <div class="modal-title" id="venta-modal-title">Registrar venta</div>
+    <input type="hidden" id="venta-edit-id">
     <div class="row">
       <div class="form-group"><label>Fecha</label><input id="venta-fecha" type="date"></div>
       <div class="form-group"><label>Canal</label>
@@ -225,7 +227,7 @@ select option{background:var(--bg3)}
       <div class="net-row total"><span>Monto neto recibido</span><span id="net-neto" style="color:var(--teal)">$0</span></div>
     </div>
     <div class="form-group"><label>Cliente (opcional)</label><input id="venta-cliente" placeholder="Nombre del cliente"></div>
-    <button class="btn btn-grad" onclick="guardarVenta()">Registrar venta</button>
+    <button class="btn btn-grad" id="venta-btn-guardar" onclick="guardarVenta()">Registrar venta</button>
     <button class="btn" onclick="closeModal('m-venta')">Cancelar</button>
   </div>
 </div>
@@ -366,7 +368,28 @@ window.eliminarProducto = async function(id){
   await saveToFirebase('productos', productos);
 };
 
+window.editarVenta = function(id){
+  const v=ventas.find(x=>x.id==id);
+  document.getElementById('venta-edit-id').value=v.id;
+  document.getElementById('venta-modal-title').textContent='Editar venta';
+  populateVentaModal();
+  document.getElementById('venta-prod').value=v.prodId;
+  document.getElementById('venta-prod').disabled=true;
+  document.getElementById('venta-cant').value=v.cant;
+  document.getElementById('venta-cant').disabled=true;
+  document.getElementById('venta-precio').value=v.precio;
+  document.getElementById('venta-canal').value=v.canal;
+  document.getElementById('venta-fecha').value=v.fecha;
+  document.getElementById('venta-cliente').value=v.cliente||'';
+  onCanalChange();
+  document.getElementById('venta-comision').value=v.comPct;
+  calcNet();
+  document.getElementById('venta-btn-guardar').textContent='Guardar cambios';
+  document.getElementById('m-venta').classList.add('open');
+};
+
 window.guardarVenta = async function(){
+  const editId=document.getElementById('venta-edit-id').value;
   const prodId=parseInt(document.getElementById('venta-prod').value);
   const prod=productos.find(x=>x.id==prodId);
   const cant=parseInt(document.getElementById('venta-cant').value)||0;
@@ -376,15 +399,21 @@ window.guardarVenta = async function(){
   const cliente=document.getElementById('venta-cliente').value.trim();
   const fecha=document.getElementById('venta-fecha').value||today();
   if(!prod) return alert('Seleccioná un producto');
-  if(cant<=0) return alert('Cantidad inválida');
-  if(cant>prod.stock) return alert('Stock insuficiente: '+prod.stock);
   if(precio<=0) return alert('Ingresá el precio');
   const bruto=cant*precio, comMonto=bruto*(comPct/100);
-  prod.stock -= cant;
-  ventas.unshift({id:Date.now(),prodId,prodNombre:prod.nombre,cant,precio,canal,comPct,comMonto,bruto,neto:bruto-comMonto,cliente,fecha,costo:prod.costo*cant});
-  ventas.sort((a,b)=>b.fecha.localeCompare(a.fecha));
-  await saveToFirebase('ventas', ventas);
-  await saveToFirebase('productos', productos);
+  if(editId){
+    const v=ventas.find(x=>x.id==parseInt(editId));
+    Object.assign(v,{precio,canal,comPct,comMonto,bruto,neto:bruto-comMonto,cliente,fecha});
+    await saveToFirebase('ventas', ventas);
+  } else {
+    if(cant<=0) return alert('Cantidad inválida');
+    if(cant>prod.stock) return alert('Stock insuficiente: '+prod.stock);
+    prod.stock -= cant;
+    ventas.unshift({id:Date.now(),prodId,prodNombre:prod.nombre,cant,precio,canal,comPct,comMonto,bruto,neto:bruto-comMonto,cliente,fecha,costo:prod.costo*cant});
+    ventas.sort((a,b)=>b.fecha.localeCompare(a.fecha));
+    await saveToFirebase('ventas', ventas);
+    await saveToFirebase('productos', productos);
+  }
   closeModal('m-venta');
 };
 
@@ -431,7 +460,7 @@ window.closeModal = function(id){
   document.getElementById(id).classList.remove('open');
   if(id!=='m-config') document.getElementById(id).querySelectorAll('input').forEach(i=>{if(i.type!='hidden')i.value='';});
   if(id==='m-producto'){ document.getElementById('prod-edit-id').value=''; document.getElementById('prod-modal-title').textContent='Nuevo producto'; document.getElementById('prod-stock-label').textContent='Stock inicial'; }
-  if(id==='m-venta'){ document.getElementById('net-box').style.display='none'; document.getElementById('comision-group').style.display='none'; }
+  if(id==='m-venta'){ document.getElementById('venta-edit-id').value=''; document.getElementById('venta-modal-title').textContent='Registrar venta'; document.getElementById('venta-btn-guardar').textContent='Registrar venta'; document.getElementById('venta-prod').disabled=false; document.getElementById('venta-cant').disabled=false; document.getElementById('net-box').style.display='none'; document.getElementById('comision-group').style.display='none'; }
 };
 
 window.onCanalChange = function(){
@@ -510,7 +539,7 @@ function renderVentas(){
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span class="badge ${CANAL_CLASS[v.canal]||'ch-per'}">${v.canal}${v.comPct>0?' ('+v.comPct+'%)':''}</span>
-        <button onclick="eliminarVenta(${v.id})" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer">eliminar</button>
+        <div><button onclick="editarVenta(${v.id})" style="font-size:11px;color:var(--cyan);background:none;border:none;cursor:pointer;margin-right:10px">editar</button><button onclick="eliminarVenta(${v.id})" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer">eliminar</button></div>
       </div>
     </div>`).join(''):'<div class="empty">Sin ventas en este canal</div>';
 }
