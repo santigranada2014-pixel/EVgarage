@@ -69,6 +69,10 @@ select option{background:var(--bg3)}
 .pct-input{width:72px;text-align:center;font-size:16px;font-weight:500;color:var(--cyan)}
 .canal-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;margin-right:10px;flex-shrink:0}
 .info-box{background:rgba(0,200,255,0.07);border:0.5px solid rgba(0,200,255,0.2);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:13px;color:var(--cyan);line-height:1.5}
+.venta-item{background:var(--bg3);border:0.5px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px}
+.venta-item .row{margin-bottom:0}
+.venta-item-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.venta-item-remove{background:none;border:none;color:var(--red);font-size:11px;cursor:pointer;padding:2px 6px}
 </style>
 </head>
 <body>
@@ -212,19 +216,17 @@ select option{background:var(--bg3)}
         </select>
       </div>
     </div>
-    <div class="form-group"><label>Producto</label><select id="venta-prod" onchange="onProdChange()"></select></div>
-    <div class="row">
-      <div class="form-group"><label>Cantidad</label><input id="venta-cant" type="number" value="1" min="1" oninput="calcNet()"></div>
-      <div class="form-group"><label>Precio unitario ($)</label><input id="venta-precio" type="number" placeholder="0" oninput="calcNet()"></div>
-    </div>
     <div class="form-group" id="comision-group" style="display:none">
       <label id="comision-label">Comisión (%)</label>
-      <input id="venta-comision" type="number" placeholder="0" step="0.1" oninput="calcNet()">
+      <input id="venta-comision" type="number" placeholder="0" step="0.1" oninput="calcNetMulti()">
     </div>
+    <div style="margin-bottom:6px"><label style="font-size:13px;color:var(--muted)">Productos</label></div>
+    <div id="venta-items"></div>
+    <button class="btn" id="btn-add-item" style="margin-bottom:10px;font-size:12px;padding:7px;color:var(--cyan);border-color:rgba(0,200,255,0.3)" onclick="addVentaItem()">+ Agregar producto</button>
     <div class="net-box" id="net-box" style="display:none">
-      <div class="net-row"><span style="color:var(--muted)">Precio bruto</span><span id="net-bruto">$0</span></div>
+      <div class="net-row"><span style="color:var(--muted)">Total bruto</span><span id="net-bruto">$0</span></div>
       <div class="net-row"><span style="color:var(--red)">Comisión canal</span><span id="net-comision" style="color:var(--red)">-$0</span></div>
-      <div class="net-row total"><span>Monto neto recibido</span><span id="net-neto" style="color:var(--teal)">$0</span></div>
+      <div class="net-row total"><span>Neto recibido</span><span id="net-neto" style="color:var(--teal)">$0</span></div>
     </div>
     <div class="form-group"><label>Cliente (opcional)</label><input id="venta-cliente" placeholder="Nombre del cliente"></div>
     <button class="btn btn-grad" id="venta-btn-guardar" onclick="guardarVenta()">Registrar venta</button>
@@ -370,46 +372,72 @@ window.eliminarProducto = async function(id){
 
 window.editarVenta = function(id){
   const v=ventas.find(x=>x.id==id);
-  document.getElementById('venta-edit-id').value=v.id;
+  // Find all ventas in the same group
+  const grupo = v.grupoId ? ventas.filter(x=>x.grupoId===v.grupoId) : [v];
+  document.getElementById('venta-edit-id').value=v.grupoId||v.id;
   document.getElementById('venta-modal-title').textContent='Editar venta';
-  populateVentaModal();
-  document.getElementById('venta-prod').value=v.prodId;
-  document.getElementById('venta-prod').disabled=true;
-  document.getElementById('venta-cant').value=v.cant;
-  document.getElementById('venta-cant').disabled=true;
-  document.getElementById('venta-precio').value=v.precio;
+  document.getElementById('venta-items').innerHTML='';
+  ventaItemCount=0;
+  grupo.forEach(g=>addVentaItem({prodId:g.prodId,cant:g.cant,precio:g.precio}));
+  // Disable prod and cant on all items when editing
+  document.querySelectorAll('.venta-item .vi-prod').forEach(s=>s.disabled=true);
+  document.querySelectorAll('.venta-item .vi-cant').forEach(i=>i.disabled=true);
+  document.getElementById('btn-add-item').style.display='none';
+  document.querySelectorAll('.venta-item-remove').forEach(b=>b.style.display='none');
   document.getElementById('venta-canal').value=v.canal;
   document.getElementById('venta-fecha').value=v.fecha;
   document.getElementById('venta-cliente').value=v.cliente||'';
   onCanalChange();
   document.getElementById('venta-comision').value=v.comPct;
-  calcNet();
+  calcNetMulti();
   document.getElementById('venta-btn-guardar').textContent='Guardar cambios';
   document.getElementById('m-venta').classList.add('open');
 };
 
 window.guardarVenta = async function(){
   const editId=document.getElementById('venta-edit-id').value;
-  const prodId=parseInt(document.getElementById('venta-prod').value);
-  const prod=productos.find(x=>x.id==prodId);
-  const cant=parseInt(document.getElementById('venta-cant').value)||0;
-  const precio=parseFloat(document.getElementById('venta-precio').value)||0;
   const canal=document.getElementById('venta-canal').value;
   const comPct=parseFloat(document.getElementById('venta-comision').value)||0;
   const cliente=document.getElementById('venta-cliente').value.trim();
   const fecha=document.getElementById('venta-fecha').value||today();
-  if(!prod) return alert('Seleccioná un producto');
-  if(precio<=0) return alert('Ingresá el precio');
-  const bruto=cant*precio, comMonto=bruto*(comPct/100);
+
   if(editId){
-    const v=ventas.find(x=>x.id==parseInt(editId));
-    Object.assign(v,{precio,canal,comPct,comMonto,bruto,neto:bruto-comMonto,cliente,fecha});
+    // Edit mode: update canal/precio/comision/cliente on all group members
+    const grupo=ventas.filter(x=>(x.grupoId||x.id)==editId);
+    const items=document.querySelectorAll('.venta-item');
+    let i=0;
+    grupo.forEach(v=>{
+      const item=items[i++];
+      const precio=parseFloat(item.querySelector('.vi-precio').value)||v.precio;
+      const bruto=v.cant*precio, comMonto=bruto*(comPct/100);
+      Object.assign(v,{precio,canal,comPct,comMonto,bruto,neto:bruto-comMonto,cliente,fecha});
+    });
     await saveToFirebase('ventas', ventas);
   } else {
-    if(cant<=0) return alert('Cantidad inválida');
-    if(cant>prod.stock) return alert('Stock insuficiente: '+prod.stock);
-    prod.stock -= cant;
-    ventas.unshift({id:Date.now(),prodId,prodNombre:prod.nombre,cant,precio,canal,comPct,comMonto,bruto,neto:bruto-comMonto,cliente,fecha,costo:prod.costo*cant});
+    // New sale: collect all items
+    const items=document.querySelectorAll('.venta-item');
+    if(!items.length) return alert('Agregá al menos un producto');
+    const lineas=[];
+    for(const item of items){
+      const prodId=parseInt(item.querySelector('.vi-prod').value);
+      const prod=productos.find(x=>x.id==prodId);
+      const cant=parseInt(item.querySelector('.vi-cant').value)||0;
+      const precio=parseFloat(item.querySelector('.vi-precio').value)||0;
+      if(!prod) return alert('Seleccioná un producto válido');
+      if(cant<=0) return alert('Cantidad inválida para '+prod.nombre);
+      if(cant>prod.stock) return alert('Stock insuficiente para '+prod.nombre+': '+prod.stock);
+      if(precio<=0) return alert('Ingresá el precio para '+prod.nombre);
+      lineas.push({prod,prodId,cant,precio});
+    }
+    const grupoId=Date.now();
+    const useGrupo=lineas.length>1;
+    for(const l of lineas){
+      const bruto=l.cant*l.precio, comMonto=bruto*(comPct/100);
+      l.prod.stock-=l.cant;
+      const v={id:Date.now()+Math.random(),prodId:l.prodId,prodNombre:l.prod.nombre,cant:l.cant,precio:l.precio,canal,comPct,comMonto,bruto,neto:bruto-comMonto,cliente,fecha,costo:l.prod.costo*l.cant};
+      if(useGrupo) v.grupoId=grupoId;
+      ventas.unshift(v);
+    }
     ventas.sort((a,b)=>b.fecha.localeCompare(a.fecha));
     await saveToFirebase('ventas', ventas);
     await saveToFirebase('productos', productos);
@@ -417,9 +445,13 @@ window.guardarVenta = async function(){
   closeModal('m-venta');
 };
 
-window.eliminarVenta = async function(id){
+window.eliminarVenta = async function(id, isGroup){
   if(!confirm('¿Eliminar?')) return;
-  ventas=ventas.filter(x=>x.id!=id);
+  if(isGroup){
+    ventas=ventas.filter(x=>x.grupoId!=id);
+  } else {
+    ventas=ventas.filter(x=>x.id!=id);
+  }
   await saveToFirebase('ventas', ventas);
 };
 
@@ -460,7 +492,7 @@ window.closeModal = function(id){
   document.getElementById(id).classList.remove('open');
   if(id!=='m-config') document.getElementById(id).querySelectorAll('input').forEach(i=>{if(i.type!='hidden')i.value='';});
   if(id==='m-producto'){ document.getElementById('prod-edit-id').value=''; document.getElementById('prod-modal-title').textContent='Nuevo producto'; document.getElementById('prod-stock-label').textContent='Stock inicial'; }
-  if(id==='m-venta'){ document.getElementById('venta-edit-id').value=''; document.getElementById('venta-modal-title').textContent='Registrar venta'; document.getElementById('venta-btn-guardar').textContent='Registrar venta'; document.getElementById('venta-prod').disabled=false; document.getElementById('venta-cant').disabled=false; document.getElementById('net-box').style.display='none'; document.getElementById('comision-group').style.display='none'; }
+  if(id==='m-venta'){ document.getElementById('venta-edit-id').value=''; document.getElementById('venta-modal-title').textContent='Registrar venta'; document.getElementById('venta-btn-guardar').textContent='Registrar venta'; document.getElementById('btn-add-item').style.display=''; document.getElementById('net-box').style.display='none'; document.getElementById('comision-group').style.display='none'; document.getElementById('venta-items').innerHTML=''; ventaItemCount=0; }
 };
 
 window.onCanalChange = function(){
@@ -469,26 +501,10 @@ window.onCanalChange = function(){
   const show=canal==='MercadoLibre'||canal==='MercadoPago cuotas';
   document.getElementById('comision-group').style.display=show?'block':'none';
   document.getElementById('comision-label').textContent=({'MercadoLibre':'Comisión MercadoLibre (%)','MercadoPago cuotas':'Costo MercadoPago (%)'}[canal]||'Comisión (%)');
-  calcNet();
+  calcNetMulti();
 };
 
-window.onProdChange = function(){
-  const p=productos.find(x=>x.id==document.getElementById('venta-prod').value);
-  if(p) document.getElementById('venta-precio').value=p.precio;
-  calcNet();
-};
-
-window.calcNet = function(){
-  const cant=parseInt(document.getElementById('venta-cant').value)||0;
-  const precio=parseFloat(document.getElementById('venta-precio').value)||0;
-  const com=parseFloat(document.getElementById('venta-comision').value)||0;
-  if(!cant||!precio){ document.getElementById('net-box').style.display='none'; return; }
-  const bruto=cant*precio, comMonto=bruto*(com/100);
-  document.getElementById('net-bruto').textContent=fmt(bruto);
-  document.getElementById('net-comision').textContent='-'+fmt(comMonto)+' ('+com+'%)';
-  document.getElementById('net-neto').textContent=fmt(bruto-comMonto);
-  document.getElementById('net-box').style.display='block';
-};
+window.calcNet = window.calcNetMulti;
 
 window.updateCfgLabel = function(key){
   const val=parseFloat(document.getElementById('cfg-'+key).value)||0;
@@ -505,13 +521,80 @@ function loadConfigUI(){
   window.updateCfgLabel('mp');
 }
 
+let ventaItemCount=0;
+
+function prodOptionsHtml(){
+  return productos.length?productos.map(p=>`<option value="${p.id}">${p.nombre} (stock: ${p.stock})</option>`).join(''):'<option value="">Sin productos</option>';
+}
+
+function addVentaItem(data){
+  const idx=ventaItemCount++;
+  const div=document.createElement('div');
+  div.className='venta-item';
+  div.id='vi-'+idx;
+  div.innerHTML=`
+    <div class="venta-item-head">
+      <span style="font-size:12px;color:var(--muted)">Producto ${document.querySelectorAll('.venta-item').length+1}</span>
+      <button class="venta-item-remove" onclick="removeVentaItem('vi-${idx}')">✕ quitar</button>
+    </div>
+    <div class="form-group" style="margin-bottom:6px"><select class="vi-prod" onchange="onViProdChange(this)">${prodOptionsHtml()}</select></div>
+    <div class="row">
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Cant.</label><input class="vi-cant" type="number" value="${data?data.cant:1}" min="1" oninput="calcNetMulti()"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Precio ($)</label><input class="vi-precio" type="number" value="${data?data.precio:''}" placeholder="0" oninput="calcNetMulti()"></div>
+    </div>`;
+  document.getElementById('venta-items').appendChild(div);
+  if(data){
+    div.querySelector('.vi-prod').value=data.prodId;
+  } else if(productos.length){
+    div.querySelector('.vi-precio').value=productos[0].precio;
+  }
+  calcNetMulti();
+}
+
+window.addVentaItem = addVentaItem;
+
+window.removeVentaItem = function(id){
+  const el=document.getElementById(id);
+  if(el) el.remove();
+  // renumber labels
+  document.querySelectorAll('.venta-item .venta-item-head span:first-child').forEach((s,i)=>s.textContent='Producto '+(i+1));
+  calcNetMulti();
+};
+
+window.onViProdChange = function(sel){
+  const p=productos.find(x=>x.id==parseInt(sel.value));
+  if(p){
+    const row=sel.closest('.venta-item');
+    row.querySelector('.vi-precio').value=p.precio;
+    calcNetMulti();
+  }
+};
+
 function populateVentaModal(){
-  document.getElementById('venta-prod').innerHTML=productos.length?productos.map(p=>`<option value="${p.id}">${p.nombre} (stock: ${p.stock})</option>`).join(''):'<option value="">Sin productos cargados</option>';
-  if(productos.length) document.getElementById('venta-precio').value=productos[0].precio;
+  document.getElementById('venta-items').innerHTML='';
+  ventaItemCount=0;
   document.getElementById('venta-canal').value='Instagram';
   document.getElementById('comision-group').style.display='none';
   document.getElementById('net-box').style.display='none';
+  addVentaItem();
 }
+
+window.calcNetMulti = function(){
+  const items=document.querySelectorAll('.venta-item');
+  let totalBruto=0;
+  items.forEach(item=>{
+    const cant=parseInt(item.querySelector('.vi-cant').value)||0;
+    const precio=parseFloat(item.querySelector('.vi-precio').value)||0;
+    totalBruto+=cant*precio;
+  });
+  const com=parseFloat(document.getElementById('venta-comision').value)||0;
+  if(!totalBruto){ document.getElementById('net-box').style.display='none'; return; }
+  const comMonto=totalBruto*(com/100);
+  document.getElementById('net-bruto').textContent=fmt(totalBruto);
+  document.getElementById('net-comision').textContent='-'+fmt(comMonto)+' ('+com+'%)';
+  document.getElementById('net-neto').textContent=fmt(totalBruto-comMonto);
+  document.getElementById('net-box').style.display='block';
+};
 
 let filtroCanal='all';
 document.getElementById('filtro-canal').addEventListener('click', e=>{
@@ -525,23 +608,41 @@ document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click
 
 function renderVentas(){
   const filtered=filtroCanal==='all'?ventas:ventas.filter(v=>v.canal===filtroCanal);
-  document.getElementById('lista-ventas').innerHTML=filtered.length?filtered.map(v=>`
-    <div class="card" style="margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-        <div style="flex:1;padding-right:8px">
-          <div class="item-name">${v.prodNombre}</div>
-          <div class="item-sub">${fmtDate(v.fecha)}${v.cliente?' · '+v.cliente:''} · ${v.cant}u × ${fmt(v.precio)}</div>
+  // Group by grupoId
+  const groups=[];
+  const seen=new Set();
+  filtered.forEach(v=>{
+    const key=v.grupoId||v.id;
+    if(seen.has(key)) return;
+    seen.add(key);
+    const members=v.grupoId?filtered.filter(x=>x.grupoId===v.grupoId):[v];
+    groups.push(members);
+  });
+  document.getElementById('lista-ventas').innerHTML=groups.length?groups.map(g=>{
+    const first=g[0];
+    const totalNeto=g.reduce((a,v)=>a+v.neto,0);
+    const totalBruto=g.reduce((a,v)=>a+v.bruto,0);
+    const itemsHtml=g.map(v=>`
+      <div style="padding:4px 0;${g.length>1?'border-bottom:0.5px solid var(--border);margin-bottom:4px':''}">
+        <div style="display:flex;justify-content:space-between">
+          <div class="item-name" style="font-size:13px">${v.prodNombre}</div>
+          <div style="font-size:13px;color:var(--teal)">${fmt(v.neto)}</div>
         </div>
-        <div style="text-align:right">
-          <div style="font-weight:500;color:var(--teal)">${fmt(v.neto)}</div>
-          ${v.comPct>0?`<div style="font-size:11px;color:var(--muted)">bruto ${fmt(v.bruto)}</div>`:''}
-        </div>
+        <div class="item-sub">${v.cant}u × ${fmt(v.precio)}</div>
+      </div>`).join('');
+    return`<div class="card" style="margin-bottom:8px">
+      <div style="margin-bottom:6px">
+        <div class="item-sub">${fmtDate(first.fecha)}${first.cliente?' · '+first.cliente:''}</div>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span class="badge ${CANAL_CLASS[v.canal]||'ch-per'}">${v.canal}${v.comPct>0?' ('+v.comPct+'%)':''}</span>
-        <div><button onclick="editarVenta(${v.id})" style="font-size:11px;color:var(--cyan);background:none;border:none;cursor:pointer;margin-right:10px">editar</button><button onclick="eliminarVenta(${v.id})" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer">eliminar</button></div>
+      ${itemsHtml}
+      ${g.length>1?`<div style="display:flex;justify-content:flex-end;font-weight:500;color:var(--teal);font-size:14px;padding-top:4px">Total: ${fmt(totalNeto)}${first.comPct>0?` <span style="font-size:11px;color:var(--muted);margin-left:6px">bruto ${fmt(totalBruto)}</span>`:''}
+</div>`:''}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span class="badge ${CANAL_CLASS[first.canal]||'ch-per'}">${first.canal}${first.comPct>0?' ('+first.comPct+'%)':''}</span>
+        <div><button onclick="editarVenta(${first.id})" style="font-size:11px;color:var(--cyan);background:none;border:none;cursor:pointer;margin-right:10px">editar</button><button onclick="eliminarVenta(${first.grupoId||first.id},${!!first.grupoId})" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer">eliminar</button></div>
       </div>
-    </div>`).join(''):'<div class="empty">Sin ventas en este canal</div>';
+    </div>`;
+  }).join(''):'<div class="empty">Sin ventas en este canal</div>';
 }
 
 function render(){
@@ -553,11 +654,20 @@ function render(){
   document.getElementById('m-ganancia').textContent=fmt(tv-tg);
   document.getElementById('m-unidades').textContent=tu;
 
-  document.getElementById('dash-ventas').innerHTML=ventas.length?ventas.slice(0,3).map(v=>`
-    <div class="list-item">
-      <div><div class="item-name">${v.prodNombre}</div><div class="item-sub">${fmtDate(v.fecha)} · <span class="badge ${CANAL_CLASS[v.canal]||'ch-per'}" style="font-size:10px;padding:1px 6px">${v.canal}</span></div></div>
-      <div style="text-align:right"><div style="font-weight:500;color:var(--teal)">${fmt(v.neto)}</div><div class="item-sub">${v.cant} u.</div></div>
-    </div>`).join(''):'<div class="empty">Sin ventas registradas</div>';
+  document.getElementById('dash-ventas').innerHTML=ventas.length?(()=>{
+    const groups=[];const seen=new Set();
+    ventas.forEach(v=>{const k=v.grupoId||v.id;if(seen.has(k))return;seen.add(k);groups.push(v.grupoId?ventas.filter(x=>x.grupoId===v.grupoId):[v]);});
+    return groups.slice(0,3).map(g=>{
+      const names=g.map(v=>v.prodNombre).join(', ');
+      const neto=g.reduce((a,v)=>a+v.neto,0);
+      const cant=g.reduce((a,v)=>a+v.cant,0);
+      const f=g[0];
+      return`<div class="list-item">
+        <div><div class="item-name">${names}</div><div class="item-sub">${fmtDate(f.fecha)} · <span class="badge ${CANAL_CLASS[f.canal]||'ch-per'}" style="font-size:10px;padding:1px 6px">${f.canal}</span></div></div>
+        <div style="text-align:right"><div style="font-weight:500;color:var(--teal)">${fmt(neto)}</div><div class="item-sub">${cant} u.</div></div>
+      </div>`;
+    }).join('');
+  })():'<div class="empty">Sin ventas registradas</div>';
 
   document.getElementById('dash-gastos').innerHTML=gastos.length?gastos.slice(0,3).map(g=>`
     <div class="list-item">
