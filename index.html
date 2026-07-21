@@ -127,6 +127,18 @@ select option{background:var(--bg3)}
     <div id="lista-ventas"><div class="empty">Sin ventas aún</div></div>
   </div>
 
+  <div class="section" id="s-entregas">
+    <div class="top-row">
+      <span class="section-title" style="margin:0">Agenda de entregas</span>
+      <button class="btn btn-grad" style="width:auto;padding:6px 14px;margin:0;font-size:13px;border-radius:8px" onclick="openModal('m-entrega')">+ Nueva</button>
+    </div>
+    <div class="filter-row" id="filtro-entrega">
+      <span class="chip active" data-f="pendiente">Pendientes</span>
+      <span class="chip" data-f="entregada">Entregadas</span>
+    </div>
+    <div id="lista-entregas"><div class="empty">Sin entregas agendadas</div></div>
+  </div>
+
   <div class="section" id="s-gastos">
     <div class="top-row">
       <span class="section-title" style="margin:0">Gastos</span>
@@ -148,6 +160,10 @@ select option{background:var(--bg3)}
   <button class="nav-btn" onclick="goTo('ventas',this)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
     Ventas
+  </button>
+  <button class="nav-btn" onclick="goTo('entregas',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+    Agenda
   </button>
   <button class="nav-btn" onclick="goTo('gastos',this)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 8h20M2 8v12a2 2 0 002 2h16a2 2 0 002-2V8M2 8l2-4h16l2 4"/></svg>
@@ -249,6 +265,51 @@ select option{background:var(--bg3)}
   </div>
 </div>
 
+<!-- MODAL ENTREGA -->
+<div class="modal-overlay" id="m-entrega">
+  <div class="modal">
+    <div class="modal-title" id="entrega-modal-title">Nueva entrega</div>
+    <input type="hidden" id="entrega-edit-id">
+    <div class="form-group"><label>Producto</label><select id="entrega-prod" onchange="onEntregaProdChange()"></select></div>
+    <div class="row">
+      <div class="form-group"><label>Cantidad</label><input id="entrega-cant" type="number" value="1" min="1" oninput="calcEntregaNet()"></div>
+      <div class="form-group"><label>Precio ($)</label><input id="entrega-precio" type="number" placeholder="0" oninput="calcEntregaNet()"></div>
+    </div>
+    <div class="form-group"><label>Cliente</label><input id="entrega-cliente" placeholder="Nombre del cliente"></div>
+    <div class="form-group"><label>Dirección</label><input id="entrega-direccion" placeholder="Dirección de entrega"></div>
+    <div class="row">
+      <div class="form-group"><label>Fecha</label><input id="entrega-fecha" type="date"></div>
+      <div class="form-group"><label>Hora</label><input id="entrega-hora" type="time"></div>
+    </div>
+    <div class="form-group"><label>Canal</label>
+      <select id="entrega-canal" onchange="onEntregaCanalChange()">
+        <option value="En persona">En persona</option>
+        <option value="Instagram">Instagram</option>
+        <option value="MercadoLibre">MercadoLibre</option>
+        <option value="MercadoPago cuotas">MercadoPago cuotas</option>
+      </select>
+    </div>
+    <div class="form-group" id="entrega-comision-group" style="display:none">
+      <label id="entrega-comision-label">Comisión (%)</label>
+      <input id="entrega-comision" type="number" placeholder="0" step="0.1" oninput="calcEntregaNet()">
+    </div>
+    <div class="net-box" id="entrega-net-box" style="display:none">
+      <div class="net-row"><span style="color:var(--muted)">Total bruto</span><span id="entrega-net-bruto">$0</span></div>
+      <div class="net-row"><span style="color:var(--red)">Comisión canal</span><span id="entrega-net-comision" style="color:var(--red)">-$0</span></div>
+      <div class="net-row total"><span>Neto recibido</span><span id="entrega-net-neto" style="color:var(--teal)">$0</span></div>
+    </div>
+    <div class="form-group"><label>Pago</label>
+      <select id="entrega-pago">
+        <option value="transferencia">Ya transfirió</option>
+        <option value="entrega">Paga en la entrega</option>
+      </select>
+    </div>
+    <div class="form-group"><label>Notas (opcional)</label><input id="entrega-notas" placeholder="Ej: llamar antes de llegar"></div>
+    <button class="btn btn-grad" id="entrega-btn-guardar" onclick="guardarEntrega()">Agendar entrega</button>
+    <button class="btn" onclick="closeModal('m-entrega')">Cancelar</button>
+  </div>
+</div>
+
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -266,7 +327,7 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
 
-let productos=[], ventas=[], gastos=[], config={ig:0,per:0,ml:13,mp:6};
+let productos=[], ventas=[], gastos=[], entregas=[], config={ig:0,per:0,ml:13,mp:6};
 const CANAL_KEY={'Instagram':'ig','En persona':'per','MercadoLibre':'ml','MercadoPago cuotas':'mp'};
 const CANAL_CLASS={'Instagram':'ch-ig','En persona':'ch-per','MercadoLibre':'ch-ml','MercadoPago cuotas':'ch-mp'};
 const fmt = n => '$'+Math.round(n).toLocaleString('es-AR');
@@ -293,13 +354,14 @@ async function saveToFirebase(collection_name, data){
 
 // Escuchar cambios en tiempo real
 function setupListeners(){
-  ['productos','ventas','gastos','config'].forEach(col => {
+  ['productos','ventas','gastos','entregas','config'].forEach(col => {
     onSnapshot(doc(db,'evgarage',col), snap => {
       if(!snap.exists()) return;
       const raw = JSON.parse(snap.data().data);
       if(col==='productos') productos = raw;
       else if(col==='ventas') ventas = raw;
       else if(col==='gastos') gastos = raw;
+      else if(col==='entregas') entregas = raw;
       else if(col==='config'){ config = raw; loadConfigUI(); }
       setSyncStatus('ok');
       render();
@@ -310,7 +372,7 @@ function setupListeners(){
 async function loadInitial(){
   setSyncStatus('loading');
   try{
-    const cols = ['productos','ventas','gastos','config'];
+    const cols = ['productos','ventas','gastos','entregas','config'];
     for(const col of cols){
       const snap = await getDoc(doc(db,'evgarage',col));
       if(snap.exists()){
@@ -318,6 +380,7 @@ async function loadInitial(){
         if(col==='productos') productos=raw;
         else if(col==='ventas') ventas=raw;
         else if(col==='gastos') gastos=raw;
+        else if(col==='entregas') entregas=raw;
         else if(col==='config'){ config=raw; loadConfigUI(); }
       }
     }
@@ -474,6 +537,165 @@ window.eliminarGasto = async function(id){
   await saveToFirebase('gastos', gastos);
 };
 
+function populateEntregaModal(){
+  document.getElementById('entrega-prod').innerHTML=prodOptionsHtml();
+  document.getElementById('entrega-prod').disabled=false;
+  document.getElementById('entrega-cant').disabled=false;
+  document.getElementById('entrega-cant').value=1;
+  document.getElementById('entrega-canal').value='En persona';
+  document.getElementById('entrega-pago').value='transferencia';
+  document.getElementById('entrega-comision-group').style.display='none';
+  document.getElementById('entrega-net-box').style.display='none';
+  if(productos.length) document.getElementById('entrega-precio').value=productos[0].precio;
+}
+
+window.onEntregaProdChange = function(){
+  const p=productos.find(x=>x.id==parseInt(document.getElementById('entrega-prod').value));
+  if(p) document.getElementById('entrega-precio').value=p.precio;
+  calcEntregaNet();
+};
+
+window.onEntregaCanalChange = function(){
+  const canal=document.getElementById('entrega-canal').value;
+  document.getElementById('entrega-comision').value=config[CANAL_KEY[canal]]||0;
+  const show=canal==='MercadoLibre'||canal==='MercadoPago cuotas';
+  document.getElementById('entrega-comision-group').style.display=show?'block':'none';
+  document.getElementById('entrega-comision-label').textContent=({'MercadoLibre':'Comisión MercadoLibre (%)','MercadoPago cuotas':'Costo MercadoPago (%)'}[canal]||'Comisión (%)');
+  calcEntregaNet();
+};
+
+window.calcEntregaNet = function(){
+  const cant=parseInt(document.getElementById('entrega-cant').value)||0;
+  const precio=parseFloat(document.getElementById('entrega-precio').value)||0;
+  const bruto=cant*precio;
+  const com=parseFloat(document.getElementById('entrega-comision').value)||0;
+  if(!bruto){ document.getElementById('entrega-net-box').style.display='none'; return; }
+  const comMonto=bruto*(com/100);
+  document.getElementById('entrega-net-bruto').textContent=fmt(bruto);
+  document.getElementById('entrega-net-comision').textContent='-'+fmt(comMonto)+' ('+com+'%)';
+  document.getElementById('entrega-net-neto').textContent=fmt(bruto-comMonto);
+  document.getElementById('entrega-net-box').style.display='block';
+};
+
+window.guardarEntrega = async function(){
+  const editId=document.getElementById('entrega-edit-id').value;
+  const prodId=parseInt(document.getElementById('entrega-prod').value);
+  const prod=productos.find(x=>x.id==prodId);
+  const cant=parseInt(document.getElementById('entrega-cant').value)||0;
+  const precio=parseFloat(document.getElementById('entrega-precio').value)||0;
+  const cliente=document.getElementById('entrega-cliente').value.trim();
+  const direccion=document.getElementById('entrega-direccion').value.trim();
+  const fecha=document.getElementById('entrega-fecha').value||today();
+  const hora=document.getElementById('entrega-hora').value;
+  const canal=document.getElementById('entrega-canal').value;
+  const comPct=parseFloat(document.getElementById('entrega-comision').value)||0;
+  const pago=document.getElementById('entrega-pago').value;
+  const notas=document.getElementById('entrega-notas').value.trim();
+
+  if(!prod) return alert('Seleccioná un producto');
+  if(cant<=0) return alert('Cantidad inválida');
+  if(!cliente) return alert('Ingresá el nombre del cliente');
+  if(!direccion) return alert('Ingresá la dirección');
+  if(precio<=0) return alert('Ingresá el precio');
+
+  if(editId){
+    const e=entregas.find(x=>x.id==editId);
+    Object.assign(e,{precio,cliente,direccion,fecha,hora,canal,comPct,pago,notas});
+    await saveToFirebase('entregas', entregas);
+  } else {
+    if(cant>prod.stock) return alert('Stock insuficiente para '+prod.nombre+': '+prod.stock+' disponible(s)');
+    prod.stock-=cant;
+    entregas.push({id:Date.now(),prodId,prodNombre:prod.nombre,cant,precio,cliente,direccion,fecha,hora,canal,comPct,pago,notas,estado:'pendiente'});
+    await saveToFirebase('entregas', entregas);
+    await saveToFirebase('productos', productos);
+  }
+  closeModal('m-entrega');
+};
+
+window.editarEntrega = function(id){
+  const e=entregas.find(x=>x.id==id);
+  document.getElementById('entrega-edit-id').value=e.id;
+  document.getElementById('entrega-prod').innerHTML=prodOptionsHtml();
+  document.getElementById('entrega-prod').value=e.prodId;
+  document.getElementById('entrega-prod').disabled=true;
+  document.getElementById('entrega-cant').value=e.cant;
+  document.getElementById('entrega-cant').disabled=true;
+  document.getElementById('entrega-precio').value=e.precio;
+  document.getElementById('entrega-cliente').value=e.cliente;
+  document.getElementById('entrega-direccion').value=e.direccion;
+  document.getElementById('entrega-fecha').value=e.fecha;
+  document.getElementById('entrega-hora').value=e.hora||'';
+  document.getElementById('entrega-canal').value=e.canal;
+  document.getElementById('entrega-pago').value=e.pago;
+  document.getElementById('entrega-notas').value=e.notas||'';
+  onEntregaCanalChange();
+  document.getElementById('entrega-comision').value=e.comPct;
+  calcEntregaNet();
+  document.getElementById('entrega-modal-title').textContent='Editar entrega';
+  document.getElementById('entrega-btn-guardar').textContent='Guardar cambios';
+  document.getElementById('m-entrega').classList.add('open');
+};
+
+window.marcarEntregada = async function(id){
+  const e=entregas.find(x=>x.id==id);
+  if(!confirm('¿Marcar como entregada? Se va a registrar como venta en la pestaña Ventas.')) return;
+  const bruto=e.cant*e.precio, comMonto=bruto*(e.comPct/100);
+  const prod=productos.find(x=>x.id==e.prodId);
+  ventas.unshift({id:Date.now()+Math.random(),prodId:e.prodId,prodNombre:e.prodNombre,cant:e.cant,precio:e.precio,canal:e.canal,comPct:e.comPct,comMonto,bruto,neto:bruto-comMonto,cliente:e.cliente,fecha:e.fecha,costo:(prod?prod.costo:0)*e.cant});
+  ventas.sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  e.estado='entregada';
+  await saveToFirebase('ventas', ventas);
+  await saveToFirebase('entregas', entregas);
+};
+
+window.eliminarEntrega = async function(id){
+  const e=entregas.find(x=>x.id==id);
+  const esPendiente=e.estado==='pendiente';
+  if(!confirm(esPendiente?'¿Eliminar esta entrega? Se va a liberar el stock reservado.':'¿Eliminar este registro? No afecta la venta ya registrada.')) return;
+  if(esPendiente){
+    const prod=productos.find(x=>x.id==e.prodId);
+    if(prod){ prod.stock+=e.cant; await saveToFirebase('productos', productos); }
+  }
+  entregas=entregas.filter(x=>x.id!=id);
+  await saveToFirebase('entregas', entregas);
+};
+
+let filtroEntrega='pendiente';
+document.getElementById('filtro-entrega').addEventListener('click', e=>{
+  const chip=e.target.closest('.chip'); if(!chip) return;
+  filtroEntrega=chip.dataset.f;
+  document.querySelectorAll('#filtro-entrega .chip').forEach(c=>c.classList.toggle('active',c.dataset.f===filtroEntrega));
+  renderEntregas();
+});
+
+function renderEntregas(){
+  const filtered=entregas.filter(e=>e.estado===filtroEntrega);
+  filtered.sort((a,b)=>{
+    const ka=(a.fecha||'')+' '+(a.hora||''), kb=(b.fecha||'')+' '+(b.hora||'');
+    return filtroEntrega==='pendiente' ? ka.localeCompare(kb) : kb.localeCompare(ka);
+  });
+  document.getElementById('lista-entregas').innerHTML = filtered.length ? filtered.map(e=>{
+    const pagoBadge = e.pago==='transferencia'
+      ? `<span class="badge" style="background:rgba(0,229,176,0.15);color:var(--teal)">Transferido</span>`
+      : `<span class="badge" style="background:rgba(255,153,68,0.15);color:var(--orange)">Paga en entrega</span>`;
+    const acciones = e.estado==='pendiente' ? `
+      <button onclick="marcarEntregada(${e.id})" style="font-size:11px;color:var(--teal);background:none;border:none;cursor:pointer;margin-right:10px">✓ entregada</button>
+      <button onclick="editarEntrega(${e.id})" style="font-size:11px;color:var(--cyan);background:none;border:none;cursor:pointer;margin-right:10px">editar</button>
+      <button onclick="eliminarEntrega(${e.id})" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer">eliminar</button>`
+      : `<button onclick="eliminarEntrega(${e.id})" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer">eliminar</button>`;
+    return `<div class="card" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+        <div><div class="item-name">${e.prodNombre}${e.cant>1?' x'+e.cant:''}</div><div class="item-sub">${e.cliente}</div></div>
+        <div style="font-weight:500;color:var(--teal)">${fmt(e.precio*e.cant)}</div>
+      </div>
+      <div class="item-sub" style="margin-bottom:8px">${fmtDate(e.fecha)}${e.hora?' · '+e.hora:''} · ${e.direccion}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${pagoBadge}<span class="badge ${CANAL_CLASS[e.canal]||'ch-per'}">${e.canal}</span></div>
+      ${e.notas?`<div class="item-sub" style="margin-bottom:8px">📝 ${e.notas}</div>`:''}
+      <div style="display:flex;justify-content:flex-end">${acciones}</div>
+    </div>`;
+  }).join('') : `<div class="empty">${filtroEntrega==='pendiente'?'Sin entregas pendientes':'Sin entregas realizadas'}</div>`;
+}
+
 window.goTo = function(tab,btn){
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
@@ -485,6 +707,7 @@ window.openModal = function(id){
   if(id==='m-venta'){ populateVentaModal(); document.getElementById('venta-fecha').value=today(); }
   if(id==='m-gasto') document.getElementById('gasto-fecha').value=today();
   if(id==='m-config') loadConfigUI();
+  if(id==='m-entrega'){ populateEntregaModal(); document.getElementById('entrega-fecha').value=today(); }
   document.getElementById(id).classList.add('open');
 };
 
@@ -493,6 +716,7 @@ window.closeModal = function(id){
   if(id!=='m-config') document.getElementById(id).querySelectorAll('input').forEach(i=>{if(i.type!='hidden')i.value='';});
   if(id==='m-producto'){ document.getElementById('prod-edit-id').value=''; document.getElementById('prod-modal-title').textContent='Nuevo producto'; document.getElementById('prod-stock-label').textContent='Stock inicial'; }
   if(id==='m-venta'){ document.getElementById('venta-edit-id').value=''; document.getElementById('venta-modal-title').textContent='Registrar venta'; document.getElementById('venta-btn-guardar').textContent='Registrar venta'; document.getElementById('btn-add-item').style.display=''; document.getElementById('net-box').style.display='none'; document.getElementById('comision-group').style.display='none'; document.getElementById('venta-items').innerHTML=''; ventaItemCount=0; }
+  if(id==='m-entrega'){ document.getElementById('entrega-edit-id').value=''; document.getElementById('entrega-modal-title').textContent='Nueva entrega'; document.getElementById('entrega-btn-guardar').textContent='Agendar entrega'; document.getElementById('entrega-prod').disabled=false; document.getElementById('entrega-cant').disabled=false; document.getElementById('entrega-comision-group').style.display='none'; document.getElementById('entrega-net-box').style.display='none'; }
 };
 
 window.onCanalChange = function(){
@@ -705,6 +929,7 @@ function render(){
     </div>`).join(''):'<div class="empty">Sin gastos registrados</div>';
 
   renderVentas();
+  renderEntregas();
 }
 
 loadInitial();
